@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiG-29 Radar / IRST Scan Zone Visualizer</title>
+  <style>
+    :root {
+      --bg: #0f141a;
+      --panel: #17202a;
+      --panel2: #101820;
+      --text: #e8eef6;
+      --muted: #a9b6c5;
+      --line: #314152;
+      --accent: #42d6ff;
+      --accent2: #ffb84d;
+      --danger: #ff6b6b;
+      --good: #61e294;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at top, #1a2633 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+
+    header {
+      padding: 18px 18px 10px;
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      gap: 14px;
+      padding: 14px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      background: rgba(23, 32, 42, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+    }
+
+    .controls {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    select, input[type="range"], button {
+      width: 100%;
+    }
+
+    select, button {
+      background: var(--panel2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      font-size: 14px;
+    }
+
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+
+    .seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .seg button.active {
+      background: #123345;
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .readout {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
+      color: #dce8f5;
+      line-height: 1.42;
+      white-space: pre-wrap;
+    }
+
+    .value-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .canvas-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .canvas-card {
+      background: rgba(16, 24, 32, 0.95);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      min-height: 430px;
+    }
+
+    .canvas-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .canvas-title span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: normal;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 380px;
+      border-radius: 8px;
+      background: #091016;
+      border: 1px solid #22303d;
+    }
+
+    .notes {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 6px;
+    }
+
+    @media (max-width: 1050px) {
+      .app { grid-template-columns: 1fr; }
+      .canvas-grid { grid-template-columns: 1fr; }
+      canvas { height: 340px; }
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  <h1>MiG-29 FULCRUM Radar / IRST Scan Zone Visualizer</h1>
+  <div class="subtitle">N-019 radar and OLS-29 IRST scan geometry for DCS reference use</div>
+</header>
+
+<main class="app">
+  <section class="panel controls">
+    <div>
+      <label for="sensor">Sensor</label>
+      <select id="sensor">
+        <option value="radar">Radar N-019</option>
+        <option value="irst">IRST OLS-29 / KOLS</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="mode">Mode</label>
+      <select id="mode"></select>
+    </div>
+
+    <div>
+      <label>Slew side</label>
+      <div class="seg">
+        <button id="slewCenter" class="active">Center</button>
+        <button id="slewLeft">Left</button>
+        <button id="slewRight">Right</button>
+      </div>
+    </div>
+
+    <div>
+      <label for="deltaH">Delta-H</label>
+      <input id="deltaH" type="range" min="0" max="10" value="4" step="1" />
+      <div class="value-row">
+        <span id="deltaHLabel">+4 km</span>
+        <span>target alt minus own alt</span>
+      </div>
+    </div>
+
+    <div>
+      <label for="tdcRange">TDC range</label>
+      <input id="tdcRange" type="range" min="5" max="150" value="50" step="1" />
+      <div class="value-row">
+        <span id="tdcLabel">50 km</span>
+        <span id="tdcLimitLabel">max 150 km</span>
+      </div>
+    </div>
+
+    <div>
+      <label for="speed">Animation speed</label>
+      <input id="speed" type="range" min="0" max="2" value="1" step="0.05" />
+      <div class="value-row">
+        <span id="speedLabel">1.00×</span>
+        <span>scan timing scale</span>
+      </div>
+    </div>
+
+    <button id="reset">Reset</button>
+
+    <div class="readout" id="readout"></div>
+
+    <div class="notes">
+      Scan traces are practical approximations. The guide gives scan volumes and update times but not a verified mechanical raster trace for every mode.
+    </div>
+  </section>
+
+  <section class="canvas-grid">
+    <div class="canvas-card">
+      <div class="canvas-title">Pilot perspective <span>Azimuth / elevation scan window</span></div>
+      <canvas id="pilotCanvas"></canvas>
+    </div>
+
+    <div class="canvas-card">
+      <div class="canvas-title">Side profile <span>Delta-H and TDC range antenna geometry</span></div>
+      <canvas id="sideCanvas"></canvas>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const MODES = {
+  radar: {
+    "Head-On search": {
+      az: 50, el: 10, tilt: true, slewable: true,
+      slewNear: 15, slewFar: 65,
+      gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
+      tdcMax: 150, cycle: 3.5,
+      path: "raster",
+      notes: "Head-On uses the long-range radar search scale. Best for initial BVR detection and high-closure nose-hot targets."
+    },
+    "Pursuit search": {
+      az: 50, el: 10, tilt: true, slewable: true,
+      slewNear: 15, slewFar: 65,
+      gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
+      tdcMax: 50, cycle: 3.5,
+      path: "raster",
+      notes: "Pursuit is all-aspect except notch band. COOP forces Pursuit. Practical radar range is much shorter than Head-On."
+    },
+    "Close Combat vertical scan": {
+      az: 6, el: 55, elLo: -10, elHi: 45, tilt: false, slewable: false,
+      gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
+      tdcMax: 10, cycle: 2.2,
+      path: "vertical",
+      notes: "Close Combat vertical scan is a narrow 6° azimuth beam with +45/-10° elevation and about 9-10 km useful range."
+    }
+  },
+  irst: {
+    "Search center zone": {
+      az: 60, el: 30, tilt: false, slewable: false,
+      gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
+      tdcMax: 40, cycle: 2.5,
+      path: "raster",
+      notes: "IRST center search is the widest OLS-29 scan zone and is the default passive search mode."
+    },
+    "Search side zone": {
+      az: 30, el: 30, tilt: false, slewable: true,
+      slewNear: 0, slewFar: 30,
+      gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
+      tdcMax: 40, cycle: 1.25,
+      path: "raster",
+      notes: "IRST side zone starts at boresight and extends 30° left or right with faster update than center search."
+    },
+    "Vertical scan": {
+      az: 4, el: 30, tilt: false, slewable: false,
+      gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
+      tdcMax: 20, cycle: 0.4,
+      path: "vertical",
+      notes: "IRST vertical scan is very fast but very narrow. It is for known target location near the nose."
+    }
+  }
+};
+
+const DELTA_H_STEPS = [-6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10];
+
+const state = {
+  sensor: "radar",
+  mode: "Head-On search",
+  slew: "Center",
+  deltaHIndex: DELTA_H_STEPS.indexOf(4),
+  tdcRange: 50,
+  speed: 1,
+  start: performance.now()
+};
+
+const els = {
+  sensor: document.getElementById("sensor"),
+  mode: document.getElementById("mode"),
+  deltaH: document.getElementById("deltaH"),
+  tdcRange: document.getElementById("tdcRange"),
+  speed: document.getElementById("speed"),
+  deltaHLabel: document.getElementById("deltaHLabel"),
+  tdcLabel: document.getElementById("tdcLabel"),
+  tdcLimitLabel: document.getElementById("tdcLimitLabel"),
+  speedLabel: document.getElementById("speedLabel"),
+  readout: document.getElementById("readout"),
+  reset: document.getElementById("reset"),
+  slewCenter: document.getElementById("slewCenter"),
+  slewLeft: document.getElementById("slewLeft"),
+  slewRight: document.getElementById("slewRight"),
+  pilotCanvas: document.getElementById("pilotCanvas"),
+  sideCanvas: document.getElementById("sideCanvas")
+};
+
+const pilotCtx = els.pilotCanvas.getContext("2d");
+const sideCtx = els.sideCanvas.getContext("2d");
+
+function modeCfg() {
+  return MODES[state.sensor][state.mode];
+}
+
+function deltaH() {
+  return DELTA_H_STEPS[state.deltaHIndex];
+}
+
+function fillModes() {
+  els.mode.innerHTML = "";
+  Object.keys(MODES[state.sensor]).forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    els.mode.appendChild(opt);
+  });
+  state.mode = Object.keys(MODES[state.sensor])[0];
+  els.mode.value = state.mode;
+  applyModeLimits();
+}
+
+function applyModeLimits() {
+  const cfg = modeCfg();
+  els.tdcRange.max = cfg.tdcMax;
+  if (state.tdcRange > cfg.tdcMax) state.tdcRange = cfg.tdcMax;
+  els.tdcRange.value = state.tdcRange;
+  if (!cfg.tilt) {
+    els.deltaH.disabled = true;
+    els.tdcRange.disabled = true;
+  } else {
+    els.deltaH.disabled = false;
+    els.tdcRange.disabled = false;
+  }
+  if (!cfg.slewable) state.slew = "Center";
+  updateSlewButtons();
+  updateLabels();
+}
+
+function updateSlewButtons() {
+  const cfg = modeCfg();
+  [els.slewCenter, els.slewLeft, els.slewRight].forEach(btn => {
+    btn.classList.remove("active");
+    btn.disabled = !cfg.slewable && btn !== els.slewCenter;
+  });
+  if (state.slew === "Left") els.slewLeft.classList.add("active");
+  else if (state.slew === "Right") els.slewRight.classList.add("active");
+  else els.slewCenter.classList.add("active");
+}
+
+function updateLabels() {
+  const cfg = modeCfg();
+  const dh = deltaH();
+  els.deltaHLabel.textContent = `${dh >= 0 ? "+" : ""}${dh} km`;
+  els.tdcLabel.textContent = `${Math.round(state.tdcRange)} km`;
+  els.tdcLimitLabel.textContent = `max ${cfg.tdcMax} km`;
+  els.speedLabel.textContent = `${state.speed.toFixed(2)}×`;
+}
+
+function scanWindow() {
+  const cfg = modeCfg();
+
+  let azLo = -cfg.az / 2;
+  let azHi = cfg.az / 2;
+
+  if (cfg.slewable && state.slew !== "Center") {
+    const near = cfg.slewNear ?? 0;
+    const far = cfg.slewFar ?? cfg.az;
+    if (state.slew === "Left") {
+      azLo = -far;
+      azHi = -near;
+    } else {
+      azLo = near;
+      azHi = far;
+    }
+  }
+
+  let elLo, elHi, tilt = 0;
+  if (cfg.tilt) {
+    tilt = Math.atan2(deltaH(), state.tdcRange) * 180 / Math.PI;
+    elLo = tilt - cfg.el / 2;
+    elHi = tilt + cfg.el / 2;
+  } else if (typeof cfg.elLo === "number") {
+    elLo = cfg.elLo;
+    elHi = cfg.elHi;
+  } else {
+    elLo = -cfg.el / 2;
+    elHi = cfg.el / 2;
+  }
+
+  return { azLo, azHi, elLo, elHi, tilt };
+}
+
+function scanPoint(t) {
+  const w = scanWindow();
+  const cfg = modeCfg();
+
+  if (cfg.path === "vertical") {
+    const y = w.elLo + (w.elHi - w.elLo) * triangle(t);
+    const x = (w.azLo + w.azHi) / 2;
+    return { x, y };
+  }
+
+  const rows = 5;
+  const tt = (t % 1) * rows;
+  const row = Math.min(rows - 1, Math.floor(tt));
+  const rowT = tt - row;
+  const y = w.elLo + (w.elHi - w.elLo) * (row + 0.5) / rows;
+  const leftToRight = row % 2 === 0;
+  const x = leftToRight
+    ? w.azLo + (w.azHi - w.azLo) * rowT
+    : w.azHi - (w.azHi - w.azLo) * rowT;
+  return { x, y };
+}
+
+function triangle(t) {
+  const p = t % 1;
+  return p < 0.5 ? p * 2 : 2 - p * 2;
+}
+
+function resizeCanvas(canvas, ctx) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.floor(rect.width * dpr));
+  const h = Math.max(1, Math.floor(rect.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: rect.width, h: rect.height };
+}
+
+function drawGrid(ctx, w, h, xMin, xMax, yMin, yMax, xLabel, yLabel) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#091016";
+  ctx.fillRect(0, 0, w, h);
+
+  const margin = { l: 48, r: 18, t: 16, b: 36 };
+  const plotW = w - margin.l - margin.r;
+  const plotH = h - margin.t - margin.b;
+
+  function sx(x) { return margin.l + (x - xMin) / (xMax - xMin) * plotW; }
+  function sy(y) { return margin.t + (yMax - y) / (yMax - yMin) * plotH; }
+
+  ctx.strokeStyle = "#22303d";
+  ctx.lineWidth = 1;
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "#a9b6c5";
+
+  const xStep = 10;
+  for (let x = Math.ceil(xMin / xStep) * xStep; x <= xMax; x += xStep) {
+    ctx.beginPath(); ctx.moveTo(sx(x), margin.t); ctx.lineTo(sx(x), margin.t + plotH); ctx.stroke();
+    ctx.fillText(String(x), sx(x) - 7, h - 16);
+  }
+
+  const yStep = 10;
+  for (let y = Math.ceil(yMin / yStep) * yStep; y <= yMax; y += yStep) {
+    ctx.beginPath(); ctx.moveTo(margin.l, sy(y)); ctx.lineTo(margin.l + plotW, sy(y)); ctx.stroke();
+    ctx.fillText(String(y), 8, sy(y) + 4);
+  }
+
+  ctx.strokeStyle = "#6b7888";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(sx(0), margin.t); ctx.lineTo(sx(0), margin.t + plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(margin.l, sy(0)); ctx.lineTo(margin.l + plotW, sy(0)); ctx.stroke();
+
+  ctx.fillStyle = "#c5d2df";
+  ctx.fillText(xLabel, margin.l + plotW / 2 - 45, h - 4);
+  ctx.save();
+  ctx.translate(14, margin.t + plotH / 2 + 55);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0);
+  ctx.restore();
+
+  return { sx, sy, margin, plotW, plotH };
+}
+
+function drawPilot(now) {
+  const { w, h } = resizeCanvas(els.pilotCanvas, pilotCtx);
+  const ctx = pilotCtx;
+  const cfg = modeCfg();
+  const win = scanWindow();
+  const grid = drawGrid(ctx, w, h, -80, 80, -55, 60, "Azimuth degrees", "Elevation degrees");
+
+  function rect(x1, y1, x2, y2, stroke, fill, dash = []) {
+    ctx.save();
+    ctx.setLineDash(dash);
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = fill;
+    ctx.lineWidth = 1.5;
+    const x = grid.sx(x1), y = grid.sy(y2);
+    const rw = grid.sx(x2) - grid.sx(x1);
+    const rh = grid.sy(y1) - grid.sy(y2);
+    if (fill) ctx.fillRect(x, y, rw, rh);
+    ctx.strokeRect(x, y, rw, rh);
+    ctx.restore();
+  }
+
+  if (state.sensor === "radar") {
+    rect(-70, -45, 70, 45, "#6b7888", null, [6, 4]);
+  }
+
+  rect(-cfg.gimbalAz, -cfg.gimbalDown, cfg.gimbalAz, cfg.gimbalUp, "#ff6b6b", null, [2, 4]);
+  rect(win.azLo, win.elLo, win.azHi, win.elHi, "#d7f6ff", "rgba(66,214,255,0.22)");
+
+  if (cfg.slewable && state.slew !== "Center") {
+    const stdAzLo = -cfg.az / 2, stdAzHi = cfg.az / 2;
+    rect(stdAzLo, win.elLo, stdAzHi, win.elHi, "#6daeff", null, [6, 4]);
+  }
+
+  drawPath(ctx, grid, now);
+}
+
+function drawPath(ctx, grid, now) {
+  const cfg = modeCfg();
+  const win = scanWindow();
+  const points = [];
+  for (let i = 0; i <= 160; i++) points.push(scanPoint(i / 160));
+
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  points.forEach((p, idx) => {
+    const x = grid.sx(p.x), y = grid.sy(p.y);
+    if (idx === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  const elapsed = ((now - state.start) / 1000) * Math.max(0.05, state.speed);
+  const t = (elapsed % cfg.cycle) / cfg.cycle;
+  const p = scanPoint(t);
+
+  ctx.fillStyle = "#ff4d4d";
+  ctx.beginPath();
+  ctx.arc(grid.sx(p.x), grid.sy(p.y), 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#e8eef6";
+  ctx.font = "12px Consolas, monospace";
+  ctx.fillText(`scan cycle: ${cfg.cycle.toFixed(2)} s`, grid.margin.l + 6, grid.margin.t + 18);
+  ctx.fillText(`dot: az ${p.x.toFixed(1)}°, el ${p.y.toFixed(1)}°`, grid.margin.l + 6, grid.margin.t + 34);
+}
+
+function drawSide() {
+  const { w, h } = resizeCanvas(els.sideCanvas, sideCtx);
+  const ctx = sideCtx;
+  const cfg = modeCfg();
+  const win = scanWindow();
+
+  const maxRange = Math.max(20, state.tdcRange * 1.25, cfg.tdcMax);
+  const ySpan = Math.max(20, Math.abs(deltaH()) * 2.5, maxRange * 0.35);
+  const grid = drawGrid(ctx, w, h, 0, maxRange, -ySpan, ySpan, "Range km", "Altitude offset km");
+
+  function lineByAngle(angleDeg, stroke, width) {
+    const r = maxRange;
+    const y = r * Math.tan(angleDeg * Math.PI / 180);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(grid.sx(0), grid.sy(0));
+    ctx.lineTo(grid.sx(r), grid.sy(y));
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#e8eef6";
+  ctx.font = "12px Consolas, monospace";
+
+  if (cfg.tilt) {
+    lineByAngle(win.elLo, "rgba(66,214,255,0.35)", 2);
+    lineByAngle(win.elHi, "rgba(66,214,255,0.35)", 2);
+    lineByAngle(win.tilt, "#42d6ff", 2.5);
+
+    ctx.fillStyle = "#42d6ff";
+    ctx.beginPath();
+    ctx.arc(grid.sx(state.tdcRange), grid.sy(deltaH()), 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#e8eef6";
+    ctx.fillText(`tilt = atan(${deltaH()} / ${Math.round(state.tdcRange)}) = ${win.tilt.toFixed(2)}°`, grid.margin.l + 8, grid.margin.t + 18);
+  } else {
+    lineByAngle(win.elLo, "rgba(255,184,77,0.35)", 2);
+    lineByAngle(win.elHi, "rgba(255,184,77,0.35)", 2);
+    ctx.fillStyle = "#e8eef6";
+    ctx.fillText("This mode is body-fixed and not steered by Delta-H.", grid.margin.l + 8, grid.margin.t + 18);
+  }
+
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(grid.sx(0), grid.sy(0));
+  ctx.lineTo(grid.sx(1.8), grid.sy(0.6));
+  ctx.lineTo(grid.sx(1.8), grid.sy(-0.6));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function updateReadout() {
+  const cfg = modeCfg();
+  const win = scanWindow();
+  els.readout.textContent =
+`SENSOR: ${state.sensor.toUpperCase()}
+MODE: ${state.mode}
+SLEW: ${state.slew}
+AZ WINDOW: ${win.azLo.toFixed(1)}° to ${win.azHi.toFixed(1)}°
+EL WINDOW: ${win.elLo.toFixed(1)}° to ${win.elHi.toFixed(1)}°
+DELTA-H: ${deltaH() >= 0 ? "+" : ""}${deltaH()} km
+TDC RANGE: ${Math.round(state.tdcRange)} km
+TDC MAX: ${cfg.tdcMax} km
+SCAN CYCLE: ${cfg.cycle.toFixed(2)} s
+
+${cfg.notes}`;
+}
+
+function render(now) {
+  updateLabels();
+  updateReadout();
+  drawPilot(now);
+  drawSide();
+  requestAnimationFrame(render);
+}
+
+els.sensor.addEventListener("change", () => {
+  state.sensor = els.sensor.value;
+  fillModes();
+  state.start = performance.now();
+});
+
+els.mode.addEventListener("change", () => {
+  state.mode = els.mode.value;
+  applyModeLimits();
+  state.start = performance.now();
+});
+
+els.deltaH.addEventListener("input", () => {
+  state.deltaHIndex = Number(els.deltaH.value);
+});
+
+els.tdcRange.addEventListener("input", () => {
+  state.tdcRange = Number(els.tdcRange.value);
+});
+
+els.speed.addEventListener("input", () => {
+  state.speed = Number(els.speed.value);
+});
+
+els.reset.addEventListener("click", () => {
+  state.sensor = "radar";
+  els.sensor.value = "radar";
+  fillModes();
+  state.slew = "Center";
+  state.deltaHIndex = DELTA_H_STEPS.indexOf(4);
+  state.tdcRange = 50;
+  state.speed = 1;
+  els.deltaH.value = state.deltaHIndex;
+  els.speed.value = state.speed;
+  applyModeLimits();
+  state.start = performance.now();
+});
+
+els.slewCenter.addEventListener("click", () => { state.slew = "Center"; updateSlewButtons(); });
+els.slewLeft.addEventListener("click", () => { if (modeCfg().slewable) state.slew = "Left"; updateSlewButtons(); });
+els.slewRight.addEventListener("click", () => { if (modeCfg().slewable) state.slew = "Right"; updateSlewButtons(); });
+
+window.addEventListener("resize", () => {
+  drawPilot(performance.now());
+  drawSide();
+});
+
+els.deltaH.min = 0;
+els.deltaH.max = DELTA_H_STEPS.length - 1;
+els.deltaH.step = 1;
+els.deltaH.value = state.deltaHIndex;
+
+fillModes();
+applyModeLimits();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
