@@ -45,11 +45,11 @@
     }
 
     .app {
-      display: grid;
-      grid-template-columns: 330px 1fr;
+      display: flex;
+      flex-direction: column;
       gap: 14px;
       padding: 14px;
-      max-width: 1400px;
+      max-width: 1550px;
       margin: 0 auto;
     }
 
@@ -62,9 +62,20 @@
     }
 
     .controls {
+      order: 2;
       display: grid;
+      grid-template-columns: repeat(6, minmax(160px, 1fr));
       gap: 12px;
-      align-content: start;
+      align-items: start;
+    }
+
+    .controls .readout {
+      grid-column: span 2;
+    }
+
+    .controls .notes {
+      grid-column: span 2;
+      margin-top: 0;
     }
 
     label {
@@ -126,6 +137,7 @@
     }
 
     .canvas-grid {
+      order: 1;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 14px;
@@ -136,7 +148,7 @@
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 10px;
-      min-height: 430px;
+      min-height: 560px;
     }
 
     .canvas-title {
@@ -158,7 +170,7 @@
     canvas {
       display: block;
       width: 100%;
-      height: 380px;
+      height: 505px;
       border-radius: 8px;
       background: #091016;
       border: 1px solid #22303d;
@@ -178,9 +190,15 @@
     }
 
     @media (max-width: 1050px) {
-      .app { grid-template-columns: 1fr; }
       .canvas-grid { grid-template-columns: 1fr; }
-      canvas { height: 340px; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls .readout, .controls .notes { grid-column: span 2; }
+      canvas { height: 380px; }
+    }
+
+    @media (max-width: 650px) {
+      .controls { grid-template-columns: 1fr; }
+      .controls .readout, .controls .notes { grid-column: span 1; }
     }
   </style>
 </head>
@@ -207,10 +225,10 @@
     </div>
 
     <div>
-      <label>Slew side</label>
+      <label>Scan Zone</label>
       <div class="seg">
-        <button id="slewCenter" class="active">Center</button>
         <button id="slewLeft">Left</button>
+        <button id="slewCenter" class="active">Center</button>
         <button id="slewRight">Right</button>
       </div>
     </div>
@@ -240,6 +258,31 @@
         <span id="speedLabel">1.00×</span>
         <span>scan timing scale</span>
       </div>
+    </div>
+
+    <div>
+      <label for="units">BRA units</label>
+      <select id="units">
+        <option value="imperial">Imperial: NM / ft / knots</option>
+        <option value="metric">Metric: km / m / km/h</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="ownAltitude">Own altitude</label>
+      <input id="ownAltitude" type="range" min="0" max="50000" value="25000" step="1000" />
+      <div class="value-row">
+        <span id="ownAltLabel">25,000 ft</span>
+        <span>MSL</span>
+      </div>
+    </div>
+
+    <div>
+      <label for="hideUndetected">Bandit visibility</label>
+      <select id="hideUndetected">
+        <option value="false">Training: show red returns</option>
+        <option value="true">Realistic: hidden until detected</option>
+      </select>
     </div>
 
     <button id="reset">Reset</button>
@@ -321,6 +364,14 @@ const MODES = {
 
 const DELTA_H_STEPS = [-6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10];
 
+const DEFAULT_OWN_ALT_FT = 25000;
+const FT_TO_M = 0.3048;
+const FT_TO_KM = 0.0003048;
+const KM_TO_NM = 0.539957;
+const MACH1_KTS = 661.47;
+const MACH1_KMH = 1225.04;
+const RADAR_BEARING_LIMIT_DEG = 65;
+
 const state = {
   sensor: "radar",
   mode: "Head-On search",
@@ -328,12 +379,23 @@ const state = {
   deltaHIndex: DELTA_H_STEPS.indexOf(4),
   tdcRange: 50,
   speed: 1,
+  units: "imperial",
+  hideUndetected: false,
+  ownAltFt: DEFAULT_OWN_ALT_FT,
   start: performance.now()
 };
 
 const target = {
   az: 0,
   el: 0,
+  range: 20,
+  altOffset: 0,
+  altitudeFt: 20000,
+  speedMach: 0.8,
+  speedKts: 530,
+  speedKmh: 982,
+  heading: 0,
+  aspect: "Flank Left",
   detected: false,
   spawnedAt: performance.now(),
   lifetimeMs: 20000,
@@ -348,6 +410,10 @@ const els = {
   deltaH: document.getElementById("deltaH"),
   tdcRange: document.getElementById("tdcRange"),
   speed: document.getElementById("speed"),
+  units: document.getElementById("units"),
+  hideUndetected: document.getElementById("hideUndetected"),
+  ownAltitude: document.getElementById("ownAltitude"),
+  ownAltLabel: document.getElementById("ownAltLabel"),
   deltaHLabel: document.getElementById("deltaHLabel"),
   tdcLabel: document.getElementById("tdcLabel"),
   tdcLimitLabel: document.getElementById("tdcLimitLabel"),
@@ -420,6 +486,11 @@ function updateLabels() {
   els.tdcLabel.textContent = `${Math.round(state.tdcRange)} km`;
   els.tdcLimitLabel.textContent = `max ${cfg.tdcMax} km`;
   els.speedLabel.textContent = `${state.speed.toFixed(2)}×`;
+  if (state.units === "metric") {
+    els.ownAltLabel.textContent = `${Math.round(state.ownAltFt * FT_TO_M).toLocaleString()} m`;
+  } else {
+    els.ownAltLabel.textContent = `${Math.round(state.ownAltFt).toLocaleString()} ft`;
+  }
 }
 
 function scanWindow() {
@@ -489,15 +560,75 @@ function spawnTarget(now) {
   target.spawnedAt = now;
   target.nextSpawnAt = now + target.lifetimeMs;
 
-  // Keep training targets mostly inside the pilot display so the user can hunt them.
-  // For radar modes, allow returns across the radar gimbal/HUD area.
-  // For IRST modes, keep them inside the smaller IRST gimbal area.
-  const azLimit = state.sensor === "radar" ? 62 : Math.min(28, cfg.gimbalAz - 2);
-  const elLow = state.sensor === "radar" ? -35 : -12;
-  const elHigh = state.sensor === "radar" ? 38 : 24;
+  // Bandits spawn inside the current sensor's gimbal and range limits,
+  // with BRA altitude limited to 0-50,000 ft MSL in 1,000 ft increments.
+  const minRange = 5;
+  const maxRange = Math.max(minRange + 1, cfg.tdcMax * 0.92);
+  // Pilot perspective uses true north/boresight as 000°.
+  // Radar training contacts spawn from 295° left through 065° right, matching ±65°.
+  // IRST contacts use the smaller IRST gimbal limit.
+  const azLimit = state.sensor === "radar"
+    ? RADAR_BEARING_LIMIT_DEG
+    : Math.max(2, cfg.gimbalAz - 2);
+
+  let placed = false;
+  for (let i = 0; i < 250; i++) {
+    const candidateRange = randomBetween(minRange, maxRange);
+    const candidateAltFt = Math.round(randomBetween(0, 50)) * 1000;
+    const altOffsetKm = (candidateAltFt - state.ownAltFt) * FT_TO_KM;
+    const candidateEl = Math.atan2(altOffsetKm, candidateRange) * 180 / Math.PI;
+
+    if (candidateEl >= -cfg.gimbalDown + 3 && candidateEl <= cfg.gimbalUp - 3) {
+      target.range = candidateRange;
+      target.altitudeFt = candidateAltFt;
+      target.altOffset = altOffsetKm;
+      target.el = candidateEl;
+      placed = true;
+      break;
+    }
+  }
+
+  // Fallback should almost never be needed, but keeps the app safe.
+  if (!placed) {
+    target.range = randomBetween(minRange, maxRange);
+    target.altitudeFt = state.ownAltFt;
+    target.altOffset = 0;
+    target.el = 0;
+  }
 
   target.az = randomBetween(-azLimit, azLimit);
-  target.el = randomBetween(elLow, elHigh);
+
+  // Altitude-dependent speed behavior:
+  // - High bandits are always fast.
+  // - Low bandits are usually fast, but have a small chance to be slow like landing traffic.
+  // - Mid-altitude bandits get a broad normal spread.
+  if (target.altitudeFt >= 32000) {
+    target.speedMach = randomBetween(1.15, 2.4);
+  } else if (target.altitudeFt <= 6000) {
+    const slowLandingChance = Math.random() < 0.18;
+    target.speedMach = slowLandingChance ? randomBetween(0.18, 0.42) : randomBetween(0.55, 1.35);
+  } else if (target.altitudeFt <= 15000) {
+    const slowChance = Math.random() < 0.08;
+    target.speedMach = slowChance ? randomBetween(0.30, 0.55) : randomBetween(0.65, 1.55);
+  } else {
+    target.speedMach = randomBetween(0.75, 2.0);
+  }
+
+  target.speedKts = Math.round(target.speedMach * MACH1_KTS);
+  target.speedKmh = Math.round(target.speedMach * MACH1_KMH);
+  target.heading = Math.round((target.az + randomBetween(90, 270) + 360) % 360);
+  target.aspect = aspectFromAz(target.az);
+}
+function aspectFromAz(az) {
+  if (Math.abs(az) < 20) return "Hot";
+  if (Math.abs(az) > 140) return "Cold";
+  return az < 0 ? "Flank Left" : "Flank Right";
+}
+
+function bearingFromAz(az) {
+  // Azimuth is relative to pilot boresight/true north:
+  // -65° becomes 295°, 0° becomes 000°, +65° becomes 065°.
+  return Math.round((az + 360) % 360);
 }
 
 function randomBetween(min, max) {
@@ -514,7 +645,8 @@ function maybeUpdateTargetDetection(now, scanP) {
   const win = scanWindow();
   const insideWindow =
     target.az >= win.azLo && target.az <= win.azHi &&
-    target.el >= win.elLo && target.el <= win.elHi;
+    target.el >= win.elLo && target.el <= win.elHi &&
+    target.range <= modeCfg().tdcMax;
 
   // Detection occurs only when the animated scan dot sweeps over the return.
   // The radius is intentionally forgiving enough to feel playable.
@@ -657,19 +789,23 @@ function drawTrainingTarget(ctx, grid, now, scanP) {
   const color = target.detected ? "#61e294" : "#ff4d4d";
 
   ctx.save();
-  ctx.fillStyle = color;
-  ctx.strokeStyle = target.detected ? "#b9ffd4" : "#ffd0d0";
-  ctx.lineWidth = 1.2;
 
-  // Four small dots in a horizontal line. This is a fake raw return rather than a real radar render.
-  target.offsets.forEach(off => {
-    const x = grid.sx(target.az + off);
-    const y = grid.sy(target.el);
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+  const showReturn = target.detected || !state.hideUndetected;
+  if (showReturn) {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = target.detected ? "#b9ffd4" : "#ffd0d0";
+    ctx.lineWidth = 1.2;
+
+    // Four small dots in a horizontal line. This is a fake raw return rather than a real radar render.
+    target.offsets.forEach(off => {
+      const x = grid.sx(target.az + off);
+      const y = grid.sy(target.el);
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
 
   ctx.fillStyle = "#e8eef6";
   ctx.font = "12px Consolas, monospace";
@@ -697,7 +833,7 @@ function drawSide() {
   const win = scanWindow();
 
   const maxRange = Math.max(20, state.tdcRange * 1.25, cfg.tdcMax);
-  const ySpan = Math.max(20, Math.abs(deltaH()) * 2.5, maxRange * 0.35);
+  const ySpan = Math.max(20, Math.abs(deltaH()) * 2.5, Math.abs(target.altOffset) * 1.25, maxRange * 0.35);
   const grid = drawGrid(ctx, w, h, 0, maxRange, -ySpan, ySpan, "Range km", "Altitude offset km");
 
   function lineByAngle(angleDeg, stroke, width) {
@@ -733,6 +869,22 @@ function drawSide() {
     ctx.fillText("This mode is body-fixed and not steered by Delta-H.", grid.margin.l + 8, grid.margin.t + 18);
   }
 
+  // Bandit return shown in side profile by range and altitude offset.
+  // In realistic mode it remains hidden until detected.
+  if (target.detected || !state.hideUndetected) {
+    ctx.fillStyle = target.detected ? "#61e294" : "#ff4d4d";
+    ctx.strokeStyle = target.detected ? "#b9ffd4" : "#ffd0d0";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(grid.sx(target.range), grid.sy(target.altOffset), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#e8eef6";
+    ctx.font = "12px Consolas, monospace";
+    ctx.fillText(`Bandit ${target.detected ? "DETECTED" : "UNDETECTED"}`, grid.sx(target.range) + 8, grid.sy(target.altOffset) - 8);
+  }
+
   ctx.fillStyle = "#ffffff";
   ctx.beginPath();
   ctx.moveTo(grid.sx(0), grid.sy(0));
@@ -742,11 +894,32 @@ function drawSide() {
   ctx.fill();
 }
 
+function braRangeText() {
+  if (state.units === "metric") return `${target.range.toFixed(1)} km`;
+  return `${(target.range * KM_TO_NM).toFixed(1)} NM`;
+}
+
+function braAltText() {
+  if (state.units === "metric") return `${Math.round(target.altitudeFt * FT_TO_M).toLocaleString()} m`;
+  return `${Math.round(target.altitudeFt).toLocaleString()} ft`;
+}
+
+function braSpeedText() {
+  if (state.units === "metric") return `${target.speedKmh.toLocaleString()} km/h`;
+  return `${target.speedKts.toLocaleString()} kts`;
+}
+
 function updateReadout() {
   const cfg = modeCfg();
   const win = scanWindow();
+  const brg = bearingFromAz(target.az);
+  const unitLabel = state.units === "metric" ? "METRIC" : "IMPERIAL";
   els.readout.textContent =
-`SENSOR: ${state.sensor.toUpperCase()}
+`CONTENTION EWR | PICTURE REPORT (${unitLabel})
+TYPE    BRG   RNG        ALT        SPD        HDG   ASPECT
+Bandit  ${String(brg).padStart(3, "0")}   ${braRangeText().padStart(8, " ")}   ${braAltText().padStart(9, " ")}   ${braSpeedText().padStart(9, " ")}   ${String(target.heading).padStart(3, "0")}   ${target.aspect}
+
+SENSOR: ${state.sensor.toUpperCase()}
 MODE: ${state.mode}
 SLEW: ${state.slew}
 AZ WINDOW: ${win.azLo.toFixed(1)}° to ${win.azHi.toFixed(1)}°
@@ -757,10 +930,12 @@ TDC MAX: ${cfg.tdcMax} km
 SCAN CYCLE: ${cfg.cycle.toFixed(2)} s
 TRAINING RETURN: ${target.detected ? "DETECTED" : "UNDETECTED"}
 TARGET LIFE: 20 s
+OWN ALT: ${state.units === "metric" ? `${Math.round(state.ownAltFt * FT_TO_M).toLocaleString()} m` : `${Math.round(state.ownAltFt).toLocaleString()} ft`}
+VISIBILITY: ${state.hideUndetected ? "return hidden until detected; BRA always visible" : "training returns visible"}
+BEARING LIMIT: 295° to 065°
 
 ${cfg.notes}`;
 }
-
 function render(now) {
   updateLabels();
   updateReadout();
@@ -793,6 +968,19 @@ els.speed.addEventListener("input", () => {
   state.speed = Number(els.speed.value);
 });
 
+els.units.addEventListener("change", () => {
+  state.units = els.units.value;
+});
+
+els.hideUndetected.addEventListener("change", () => {
+  state.hideUndetected = els.hideUndetected.value === "true";
+});
+
+els.ownAltitude.addEventListener("input", () => {
+  state.ownAltFt = Number(els.ownAltitude.value);
+  spawnTarget(performance.now());
+});
+
 els.reset.addEventListener("click", () => {
   state.sensor = "radar";
   els.sensor.value = "radar";
@@ -801,8 +989,13 @@ els.reset.addEventListener("click", () => {
   state.deltaHIndex = DELTA_H_STEPS.indexOf(4);
   state.tdcRange = 50;
   state.speed = 1;
+  state.units = "imperial";
   els.deltaH.value = state.deltaHIndex;
+els.units.value = state.units;
+els.hideUndetected.value = String(state.hideUndetected);
+els.ownAltitude.value = state.ownAltFt;
   els.speed.value = state.speed;
+  els.units.value = state.units;
   applyModeLimits();
   state.start = performance.now();
 });
