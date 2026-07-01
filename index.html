@@ -136,6 +136,29 @@
       margin-top: 4px;
     }
 
+    .dial-wrap {
+      display: grid;
+      justify-items: center;
+      gap: 4px;
+    }
+
+    #deltaHDial, #modeDial {
+      width: 145px;
+      height: 115px;
+      cursor: pointer;
+      border-radius: 10px;
+      background: #0b1219;
+      border: 1px solid var(--line);
+      touch-action: manipulation;
+    }
+
+    .dial-help {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+      line-height: 1.25;
+    }
+
     .canvas-grid {
       order: 1;
       display: grid;
@@ -189,6 +212,10 @@
       margin-top: 6px;
     }
 
+    .hidden {
+      display: none !important;
+    }
+
     @media (max-width: 1050px) {
       .canvas-grid { grid-template-columns: 1fr; }
       .controls { grid-template-columns: 1fr 1fr; }
@@ -220,8 +247,36 @@
     </div>
 
     <div>
-      <label for="mode">Mode</label>
-      <select id="mode"></select>
+      <label for="deltaHDial">Delta-H</label>
+      <div class="dial-wrap">
+        <canvas id="deltaHDial" width="145" height="115"></canvas>
+        <div class="value-row" style="width:100%">
+          <span id="deltaHLabel">0 km</span>
+          <span>target alt minus own alt</span>
+        </div>
+        <div class="dial-help">Left click = CCW / lower<br>Right click = CW / higher</div>
+      </div>
+    </div>
+
+    <div id="radarModeControl">
+      <label for="modeDial">Radar Mode</label>
+      <div class="dial-wrap">
+        <canvas id="modeDial" width="145" height="115"></canvas>
+        <div class="value-row" style="width:100%">
+          <span id="modeLabel">Head-On</span>
+          <span>radar selector</span>
+        </div>
+        <div class="dial-help">Left click = CCW<br>Right click = CW</div>
+      </div>
+    </div>
+
+    <div id="irstModeControl">
+      <label for="irstMode">IRST Mode</label>
+      <select id="irstMode">
+        <option value="IRST search">IRST search</option>
+        <option value="Vertical scan">Vertical scan</option>
+      </select>
+      <div class="small">Selects OLS-29 search pattern</div>
     </div>
 
     <div>
@@ -230,15 +285,6 @@
         <button id="slewLeft">Left</button>
         <button id="slewCenter" class="active">Center</button>
         <button id="slewRight">Right</button>
-      </div>
-    </div>
-
-    <div>
-      <label for="deltaH">Delta-H</label>
-      <input id="deltaH" type="range" min="0" max="10" value="4" step="1" />
-      <div class="value-row">
-        <span id="deltaHLabel">+4 km</span>
-        <span>target alt minus own alt</span>
       </div>
     </div>
 
@@ -312,11 +358,20 @@
 
 const MODES = {
   radar: {
+    "Auto": {
+      az: 50, el: 10, tilt: true, slewable: true,
+      slewNear: 15, slewFar: 65,
+      gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
+      tdcMax: 150, cycle: 7.5,
+      path: "raster",
+      autoAlternates: true,
+      notes: "Auto alternates radar search between Head-On and Pursuit. It scans one Head-On cycle, then one Pursuit cycle, and repeats."
+    },
     "Head-On search": {
       az: 50, el: 10, tilt: true, slewable: true,
       slewNear: 15, slewFar: 65,
       gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
-      tdcMax: 150, cycle: 3.5,
+      tdcMax: 150, cycle: 3.75,
       path: "raster",
       notes: "Head-On uses the long-range radar search scale. Best for initial BVR detection and high-closure nose-hot targets."
     },
@@ -324,7 +379,7 @@ const MODES = {
       az: 50, el: 10, tilt: true, slewable: true,
       slewNear: 15, slewFar: 65,
       gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
-      tdcMax: 50, cycle: 3.5,
+      tdcMax: 50, cycle: 3.75,
       path: "raster",
       notes: "Pursuit is all-aspect except notch band. COOP forces Pursuit. Practical radar range is much shorter than Head-On."
     },
@@ -337,20 +392,20 @@ const MODES = {
     }
   },
   irst: {
-    "Search center zone": {
+    "IRST search": {
       az: 60, el: 30, tilt: false, slewable: false,
       gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
       tdcMax: 40, cycle: 2.5,
       path: "raster",
       notes: "IRST center search is the widest OLS-29 scan zone and is the default passive search mode."
     },
-    "Search side zone": {
+    "IRST search": {
       az: 30, el: 30, tilt: false, slewable: true,
       slewNear: 0, slewFar: 30,
       gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
-      tdcMax: 40, cycle: 1.25,
+      tdcMax: 40, cycle: 3.5,
       path: "raster",
-      notes: "IRST side zone starts at boresight and extends 30° left or right with faster update than center search."
+      notes: "IRST search uses a 3.5 second center scan. Left or right scan-zone selection doubles the scan speed."
     },
     "Vertical scan": {
       az: 4, el: 30, tilt: false, slewable: false,
@@ -363,6 +418,13 @@ const MODES = {
 };
 
 const DELTA_H_STEPS = [-6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10];
+const RADAR_MODE_ORDER = ["Auto", "Close Combat vertical scan", "Head-On search", "Pursuit search"];
+const RADAR_MODE_ANGLES = {
+  "Auto": -60,
+  "Close Combat vertical scan": -30,
+  "Head-On search": 0,
+  "Pursuit search": 30
+};
 
 const DEFAULT_OWN_ALT_FT = 25000;
 const FT_TO_M = 0.3048;
@@ -371,12 +433,36 @@ const KM_TO_NM = 0.539957;
 const MACH1_KTS = 661.47;
 const MACH1_KMH = 1225.04;
 const RADAR_BEARING_LIMIT_DEG = 65;
+const OWN_SPEED_KMH = 900;
+
+// Simplified N019 detection gates used by the trainer.
+// These are not PRF frequencies; they are usable target closure/range envelopes.
+const RADAR_DETECTION_MODEL = {
+  HPRF: {
+    name: "High PRF / Head-On",
+    minClosureKmh: 230,
+    maxClosureKmh: 2500,
+    maxRangeKm: 70
+  },
+  MPRF: {
+    name: "Medium PRF / Pursuit",
+    minClosureKmh: 150,
+    maxClosureKmh: 1100,
+    maxRangeKm: 35
+  },
+  CLOSE: {
+    name: "Close Combat",
+    minClosureKmh: -1800,
+    maxClosureKmh: 1800,
+    maxRangeKm: 10
+  }
+};
 
 const state = {
   sensor: "radar",
   mode: "Head-On search",
   slew: "Center",
-  deltaHIndex: DELTA_H_STEPS.indexOf(4),
+  deltaHIndex: DELTA_H_STEPS.indexOf(0),
   tdcRange: 50,
   speed: 1,
   units: "imperial",
@@ -391,9 +477,11 @@ const target = {
   range: 20,
   altOffset: 0,
   altitudeFt: 20000,
+  altOffsetFt: -5000,
   speedMach: 0.8,
   speedKts: 530,
   speedKmh: 982,
+  closureKmh: 1200,
   heading: 0,
   aspect: "Flank Left",
   detected: false,
@@ -406,8 +494,12 @@ const target = {
 
 const els = {
   sensor: document.getElementById("sensor"),
-  mode: document.getElementById("mode"),
-  deltaH: document.getElementById("deltaH"),
+  modeDial: document.getElementById("modeDial"),
+  modeLabel: document.getElementById("modeLabel"),
+  radarModeControl: document.getElementById("radarModeControl"),
+  irstModeControl: document.getElementById("irstModeControl"),
+  irstMode: document.getElementById("irstMode"),
+  deltaHDial: document.getElementById("deltaHDial"),
   tdcRange: document.getElementById("tdcRange"),
   speed: document.getElementById("speed"),
   units: document.getElementById("units"),
@@ -439,37 +531,50 @@ function deltaH() {
 }
 
 function fillModes() {
-  els.mode.innerHTML = "";
-  Object.keys(MODES[state.sensor]).forEach(name => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    els.mode.appendChild(opt);
-  });
-  state.mode = Object.keys(MODES[state.sensor])[0];
-  els.mode.value = state.mode;
+  if (state.sensor === "radar") {
+    if (!RADAR_MODE_ORDER.includes(state.mode)) state.mode = "Head-On search";
+    if (els.radarModeControl) {
+      els.radarModeControl.classList.remove("hidden");
+      els.radarModeControl.style.display = "";
+    }
+    if (els.irstModeControl) els.irstModeControl.classList.add("hidden");
+  } else {
+    if (!MODES.irst[state.mode]) state.mode = els.irstMode ? els.irstMode.value : "IRST search";
+    if (els.irstMode) els.irstMode.value = state.mode;
+    if (els.radarModeControl) els.radarModeControl.classList.add("hidden");
+    if (els.irstModeControl) {
+      els.irstModeControl.classList.remove("hidden");
+      els.irstModeControl.style.display = "";
+    }
+  }
   applyModeLimits();
+  drawModeDial();
 }
-
 function applyModeLimits() {
   const cfg = modeCfg();
   els.tdcRange.max = cfg.tdcMax;
   if (state.tdcRange > cfg.tdcMax) state.tdcRange = cfg.tdcMax;
   els.tdcRange.value = state.tdcRange;
   if (!cfg.tilt) {
-    els.deltaH.disabled = true;
     els.tdcRange.disabled = true;
   } else {
-    els.deltaH.disabled = false;
     els.tdcRange.disabled = false;
   }
   if (!cfg.slewable) state.slew = "Center";
   updateSlewButtons();
   updateLabels();
+  drawModeDial();
 }
 
 function updateSlewButtons() {
   const cfg = modeCfg();
+
+  // Radar search uses a left half / both halves / right half concept.
+  // IRST keeps the normal left / center / right wording.
+  if (els.slewCenter) {
+    els.slewCenter.textContent = "Center";
+  }
+
   [els.slewCenter, els.slewLeft, els.slewRight].forEach(btn => {
     btn.classList.remove("active");
     btn.disabled = !cfg.slewable && btn !== els.slewCenter;
@@ -486,20 +591,285 @@ function updateLabels() {
   els.tdcLabel.textContent = `${Math.round(state.tdcRange)} km`;
   els.tdcLimitLabel.textContent = `max ${cfg.tdcMax} km`;
   els.speedLabel.textContent = `${state.speed.toFixed(2)}×`;
-  if (state.units === "metric") {
-    els.ownAltLabel.textContent = `${Math.round(state.ownAltFt * FT_TO_M).toLocaleString()} m`;
-  } else {
-    els.ownAltLabel.textContent = `${Math.round(state.ownAltFt).toLocaleString()} ft`;
-  }
+  els.ownAltLabel.textContent = ownAltText();
+  drawDeltaHDial();
+  drawModeDial();
 }
 
-function scanWindow() {
+function modeDisplayName(name) {
+  if (name === "Head-On search") return "Head-On";
+  if (name === "Pursuit search") return "Pursuit";
+  if (name === "Close Combat vertical scan") return "Close Combat";
+  return name;
+}
+
+function activeAutoSubmode(now = performance.now()) {
   const cfg = modeCfg();
+  if (!cfg.autoAlternates) return state.mode;
+  const phase = Math.floor(((now - state.start) / 1000) / 3.75) % 2;
+  return phase === 0 ? "Head-On search" : "Pursuit search";
+}
+
+function activeModeCfg(now = performance.now()) {
+  if (state.sensor === "radar" && modeCfg().autoAlternates) {
+    return MODES.radar[activeAutoSubmode(now)];
+  }
+  return modeCfg();
+}
+
+function effectiveScanCycleSeconds(cfg = activeModeCfg()) {
+  // IRST Search center completes in 3.5 seconds.
+  // Selecting left or right scan zone halves the scan volume, so the sweep completes in 1.75 seconds.
+  if (state.sensor === "irst" && state.mode === "IRST search" && state.slew !== "Center") {
+    return cfg.cycle / 2;
+  }
+  return cfg.cycle;
+}
+
+function isIrstSearchZoneMode(cfg = activeModeCfg()) {
+  return state.sensor === "irst" && cfg.slewable;
+}
+
+function scanZoneDisplayName() {
+  return state.slew;
+}
+
+function drawModeDial() {
+  const canvas = els.modeDial;
+  if (!canvas || state.sensor !== "radar") return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.fillStyle = "#101820";
+  ctx.fillRect(0, 0, w, h);
+
+  const cx = w / 2;
+  const cy = 62;
+  const r = 48;
+
+  function posFromClockDeg(deg, radius) {
+    const rad = (deg - 90) * Math.PI / 180;
+    return {
+      x: cx + Math.cos(rad) * radius,
+      y: cy + Math.sin(rad) * radius
+    };
+  }
+
+  const grad = ctx.createRadialGradient(cx - 16, cy - 18, 8, cx, cy, r + 20);
+  grad.addColorStop(0, "#7d8791");
+  grad.addColorStop(0.55, "#3e4751");
+  grad.addColorStop(1, "#151b22");
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#9aa6b2";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.font = "bold 10px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  RADAR_MODE_ORDER.forEach(name => {
+    const deg = RADAR_MODE_ANGLES[name];
+    const tickInner = posFromClockDeg(deg, r + 1);
+    const tickOuter = posFromClockDeg(deg, r + 8);
+    const label = posFromClockDeg(deg, r - 14);
+    const isSelected = state.sensor === "radar" && state.mode === name;
+
+    ctx.strokeStyle = isSelected ? "#61e294" : "#c9d0d8";
+    ctx.lineWidth = isSelected ? 2.4 : 1.2;
+    ctx.beginPath();
+    ctx.moveTo(tickInner.x, tickInner.y);
+    ctx.lineTo(tickOuter.x, tickOuter.y);
+    ctx.stroke();
+
+    ctx.fillStyle = isSelected ? "#61e294" : "#d7dde5";
+    const text = modeDisplayName(name);
+    if (text === "Close Combat") {
+      ctx.fillText("Close", label.x, label.y - 6);
+      ctx.fillText("Combat", label.x, label.y + 6);
+    } else {
+      ctx.fillText(text, label.x, label.y);
+    }
+  });
+
+  const selectedDeg = RADAR_MODE_ANGLES[state.mode] ?? 0;
+  const knobRad = (selectedDeg - 90) * Math.PI / 180;
+
+  const knobGrad = ctx.createRadialGradient(cx - 10, cy - 10, 4, cx, cy, 34);
+  knobGrad.addColorStop(0, "#f1f3f5");
+  knobGrad.addColorStop(0.55, "#8e969f");
+  knobGrad.addColorStop(1, "#3b4149");
+
+  ctx.fillStyle = knobGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 29, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#d9dee4";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(knobRad + Math.PI / 2);
+  ctx.fillStyle = "#1b222b";
+  ctx.beginPath();
+  ctx.roundRect(-5, -31, 10, 22, 4);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "#d7dde5";
+  ctx.font = "bold 11px Arial";
+  ctx.textAlign = "right";
+  ctx.fillText("MODE", w - 8, h - 8);
+
+  if (els.modeLabel) els.modeLabel.textContent = modeDisplayName(state.mode);
+}
+
+function drawDeltaHDial() {
+  const canvas = els.deltaHDial;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.fillStyle = "#101820";
+  ctx.fillRect(0, 0, w, h);
+
+  const cx = w / 2;
+  const cy = 62;
+  const r = 48;
+
+  // Clock-style degrees: 0° top, 90° right, 180° bottom, 270° left.
+  function posFromClockDeg(deg, radius) {
+    const rad = (deg - 90) * Math.PI / 180;
+    return {
+      x: cx + Math.cos(rad) * radius,
+      y: cy + Math.sin(rad) * radius
+    };
+  }
+
+  // Exact requested positions.
+  const dialAngles = {
+    "-6": 150,
+    "-4": 180,
+    "-2": 210,
+    "-1": 240,
+    "0": 270,
+    "1": 300,
+    "2": 330,
+    "4": 0,
+    "6": 30,
+    "8": 60,
+    "10": 90
+  };
+
+  function dialAngleForValue(value) {
+    return dialAngles[String(value)];
+  }
+
+  // Main dial body.
+  const grad = ctx.createRadialGradient(cx - 16, cy - 18, 8, cx, cy, r + 20);
+  grad.addColorStop(0, "#7d8791");
+  grad.addColorStop(0.55, "#3e4751");
+  grad.addColorStop(1, "#151b22");
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#9aa6b2";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Draw labels/ticks. Selected number highlights green.
+  ctx.font = "bold 12px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const selected = deltaH();
+
+  DELTA_H_STEPS.forEach(v => {
+    const deg = dialAngleForValue(v);
+    const tickInner = posFromClockDeg(deg, r + 1);
+    const tickOuter = posFromClockDeg(deg, r + 8);
+    const label = posFromClockDeg(deg, r - 12);
+    const isSelected = v === selected;
+
+    ctx.strokeStyle = isSelected ? "#61e294" : "#c9d0d8";
+    ctx.lineWidth = isSelected ? 2.4 : 1.2;
+    ctx.beginPath();
+    ctx.moveTo(tickInner.x, tickInner.y);
+    ctx.lineTo(tickOuter.x, tickOuter.y);
+    ctx.stroke();
+
+    ctx.fillStyle = isSelected ? "#61e294" : "#d7dde5";
+    ctx.fillText(String(v), label.x, label.y);
+  });
+
+  // Knob pointer angle. Clicks are clamped, so it never wraps from one extreme to the other.
+  const selectedDeg = dialAngleForValue(selected);
+  const knobRad = (selectedDeg - 90) * Math.PI / 180;
+
+  const knobGrad = ctx.createRadialGradient(cx - 10, cy - 10, 4, cx, cy, 34);
+  knobGrad.addColorStop(0, "#f1f3f5");
+  knobGrad.addColorStop(0.55, "#8e969f");
+  knobGrad.addColorStop(1, "#3b4149");
+
+  ctx.fillStyle = knobGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 29, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#d9dee4";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Pointer notch points to selected value.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(knobRad + Math.PI / 2);
+  ctx.fillStyle = "#1b222b";
+  ctx.beginPath();
+  ctx.roundRect(-5, -31, 10, 22, 4);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "#d7dde5";
+  ctx.font = "bold 11px Arial";
+  ctx.textAlign = "right";
+  ctx.fillText("ΔH", w - 8, h - 8);
+}
+
+function scanWindow(now = performance.now()) {
+  const cfg = activeModeCfg(now);
 
   let azLo = -cfg.az / 2;
   let azHi = cfg.az / 2;
 
-  if (cfg.slewable && state.slew !== "Center") {
+  if (isIrstSearchZoneMode(cfg)) {
+    // IRST search behavior:
+    // Left = left side only, Center = full search area, Right = right side only.
+    if (state.slew === "Left") {
+      azLo = -cfg.az;
+      azHi = 0;
+    } else if (state.slew === "Right") {
+      azLo = 0;
+      azHi = cfg.az;
+    } else {
+      azLo = -cfg.az;
+      azHi = cfg.az;
+    }
+  } else if (cfg.slewable && state.slew !== "Center") {
     const near = cfg.slewNear ?? 0;
     const far = cfg.slewFar ?? cfg.az;
     if (state.slew === "Left") {
@@ -529,7 +899,7 @@ function scanWindow() {
 
 function scanPoint(t) {
   const w = scanWindow();
-  const cfg = modeCfg();
+  const cfg = activeModeCfg();
 
   if (cfg.path === "vertical") {
     const y = w.elLo + (w.elHi - w.elLo) * triangle(t);
@@ -554,19 +924,59 @@ function triangle(t) {
   return p < 0.5 ? p * 2 : 2 - p * 2;
 }
 
+function radarGateForModeName(modeName = activeAutoSubmode()) {
+  if (modeName === "Head-On search") return RADAR_DETECTION_MODEL.HPRF;
+  if (modeName === "Pursuit search") return RADAR_DETECTION_MODEL.MPRF;
+  if (modeName === "Close Combat vertical scan") return RADAR_DETECTION_MODEL.CLOSE;
+  return RADAR_DETECTION_MODEL.HPRF;
+}
+
+function radarGateResult(modeName = activeAutoSubmode()) {
+  const gate = radarGateForModeName(modeName);
+
+  const closureOk =
+    target.closureKmh >= gate.minClosureKmh &&
+    target.closureKmh <= gate.maxClosureKmh;
+
+  const rangeOk = target.range <= gate.maxRangeKm;
+
+  return {
+    gate,
+    closureOk,
+    rangeOk,
+    ok: closureOk && rangeOk
+  };
+}
+
+function randomAspect() {
+  const r = Math.random();
+  if (r < 0.38) return "Hot";
+  if (r < 0.68) return Math.random() < 0.5 ? "Flank Left" : "Flank Right";
+  return "Cold";
+}
+
+function headingForAspect(aspect, bearing) {
+  if (aspect === "Hot") return Math.round((bearing + 180 + randomBetween(-25, 25) + 360) % 360);
+  if (aspect === "Cold") return Math.round((bearing + randomBetween(-25, 25) + 360) % 360);
+  return Math.round((bearing + (aspect === "Flank Left" ? 90 : -90) + randomBetween(-20, 20) + 360) % 360);
+}
+
+function closureForAspect(aspect, speedKmh) {
+  if (aspect === "Hot") return Math.round(OWN_SPEED_KMH + speedKmh * randomBetween(0.75, 1.0));
+  if (aspect === "Cold") return Math.round(Math.max(0, OWN_SPEED_KMH - speedKmh * randomBetween(0.70, 1.0)));
+  return Math.round(OWN_SPEED_KMH + speedKmh * randomBetween(-0.15, 0.35));
+}
+
 function spawnTarget(now) {
   const cfg = modeCfg();
   target.detected = false;
   target.spawnedAt = now;
   target.nextSpawnAt = now + target.lifetimeMs;
 
-  // Bandits spawn inside the current sensor's gimbal and range limits,
-  // with BRA altitude limited to 0-50,000 ft MSL in 1,000 ft increments.
+  // Bandits spawn inside the current sensor's gimbal and range limits.
+  // BRA altitude is absolute MSL and stays fixed until the next bandit respawn.
   const minRange = 5;
   const maxRange = Math.max(minRange + 1, cfg.tdcMax * 0.92);
-  // Pilot perspective uses true north/boresight as 000°.
-  // Radar training contacts spawn from 295° left through 065° right, matching ±65°.
-  // IRST contacts use the smaller IRST gimbal limit.
   const azLimit = state.sensor === "radar"
     ? RADAR_BEARING_LIMIT_DEG
     : Math.max(2, cfg.gimbalAz - 2);
@@ -575,12 +985,14 @@ function spawnTarget(now) {
   for (let i = 0; i < 250; i++) {
     const candidateRange = randomBetween(minRange, maxRange);
     const candidateAltFt = Math.round(randomBetween(0, 50)) * 1000;
-    const altOffsetKm = (candidateAltFt - state.ownAltFt) * FT_TO_KM;
+    const altOffsetFt = candidateAltFt - state.ownAltFt;
+    const altOffsetKm = altOffsetFt * FT_TO_KM;
     const candidateEl = Math.atan2(altOffsetKm, candidateRange) * 180 / Math.PI;
 
     if (candidateEl >= -cfg.gimbalDown + 3 && candidateEl <= cfg.gimbalUp - 3) {
       target.range = candidateRange;
       target.altitudeFt = candidateAltFt;
+      target.altOffsetFt = altOffsetFt;
       target.altOffset = altOffsetKm;
       target.el = candidateEl;
       placed = true;
@@ -591,8 +1003,9 @@ function spawnTarget(now) {
   // Fallback should almost never be needed, but keeps the app safe.
   if (!placed) {
     target.range = randomBetween(minRange, maxRange);
-    target.altitudeFt = state.ownAltFt;
-    target.altOffset = 0;
+    target.altitudeFt = Math.round(state.ownAltFt / 1000) * 1000;
+    target.altOffsetFt = target.altitudeFt - state.ownAltFt;
+    target.altOffset = target.altOffsetFt * FT_TO_KM;
     target.el = 0;
   }
 
@@ -616,8 +1029,17 @@ function spawnTarget(now) {
 
   target.speedKts = Math.round(target.speedMach * MACH1_KTS);
   target.speedKmh = Math.round(target.speedMach * MACH1_KMH);
-  target.heading = Math.round((target.az + randomBetween(90, 270) + 360) % 360);
-  target.aspect = aspectFromAz(target.az);
+
+  const bearing = bearingFromAz(target.az);
+  target.aspect = randomAspect();
+  target.heading = headingForAspect(target.aspect, bearing);
+  target.closureKmh = closureForAspect(target.aspect, target.speedKmh);
+}
+
+function recomputeTargetRelativeGeometry() {
+  target.altOffsetFt = target.altitudeFt - state.ownAltFt;
+  target.altOffset = target.altOffsetFt * FT_TO_KM;
+  target.el = Math.atan2(target.altOffset, target.range) * 180 / Math.PI;
 }
 function aspectFromAz(az) {
   if (Math.abs(az) < 20) return "Hot";
@@ -643,13 +1065,16 @@ function maybeUpdateTargetDetection(now, scanP) {
   if (now >= target.nextSpawnAt) spawnTarget(now);
 
   const win = scanWindow();
+  const prfGate = state.sensor === "radar" ? radarGateResult(activeAutoSubmode()) : { ok: true };
+
   const insideWindow =
     target.az >= win.azLo && target.az <= win.azHi &&
     target.el >= win.elLo && target.el <= win.elHi &&
-    target.range <= modeCfg().tdcMax;
+    target.range <= activeModeCfg().tdcMax &&
+    prfGate.ok;
 
-  // Detection occurs only when the animated scan dot sweeps over the return.
-  // The radius is intentionally forgiving enough to feel playable.
+  // Detection occurs only when the animated scan dot sweeps over the return
+  // and the active PRF/range gate can actually see that contact.
   const dist = Math.hypot(scanP.x - target.az, scanP.y - target.el);
   if (insideWindow && dist <= 3.0) target.detected = true;
 }
@@ -715,8 +1140,8 @@ function drawGrid(ctx, w, h, xMin, xMax, yMin, yMax, xLabel, yLabel) {
 function drawPilot(now) {
   const { w, h } = resizeCanvas(els.pilotCanvas, pilotCtx);
   const ctx = pilotCtx;
-  const cfg = modeCfg();
-  const win = scanWindow();
+  const cfg = activeModeCfg(now);
+  const win = scanWindow(now);
   const grid = drawGrid(ctx, w, h, -80, 80, -55, 60, "Azimuth degrees", "Elevation degrees");
 
   function rect(x1, y1, x2, y2, stroke, fill, dash = []) {
@@ -741,7 +1166,8 @@ function drawPilot(now) {
   rect(win.azLo, win.elLo, win.azHi, win.elHi, "#d7f6ff", "rgba(66,214,255,0.22)");
 
   if (cfg.slewable && state.slew !== "Center") {
-    const stdAzLo = -cfg.az / 2, stdAzHi = cfg.az / 2;
+    const stdAzLo = -cfg.az / 2;
+    const stdAzHi = cfg.az / 2;
     rect(stdAzLo, win.elLo, stdAzHi, win.elHi, "#6daeff", null, [6, 4]);
   }
 
@@ -750,7 +1176,7 @@ function drawPilot(now) {
 }
 
 function drawPath(ctx, grid, now) {
-  const cfg = modeCfg();
+  const cfg = activeModeCfg(now);
   const win = scanWindow();
   const points = [];
   for (let i = 0; i <= 160; i++) points.push(scanPoint(i / 160));
@@ -765,8 +1191,9 @@ function drawPath(ctx, grid, now) {
   });
   ctx.stroke();
 
+  const scanCycle = effectiveScanCycleSeconds(cfg);
   const elapsed = ((now - state.start) / 1000) * Math.max(0.05, state.speed);
-  const t = (elapsed % cfg.cycle) / cfg.cycle;
+  const t = (elapsed % scanCycle) / scanCycle;
   const p = scanPoint(t);
 
   ctx.fillStyle = "#ff4d4d";
@@ -776,7 +1203,7 @@ function drawPath(ctx, grid, now) {
 
   ctx.fillStyle = "#e8eef6";
   ctx.font = "12px Consolas, monospace";
-  ctx.fillText(`scan cycle: ${cfg.cycle.toFixed(2)} s`, grid.margin.l + 6, grid.margin.t + 18);
+  ctx.fillText(`scan cycle: ${scanCycle.toFixed(2)} s`, grid.margin.l + 6, grid.margin.t + 18);
   ctx.fillText(`dot: az ${p.x.toFixed(1)}°, el ${p.y.toFixed(1)}°`, grid.margin.l + 6, grid.margin.t + 34);
   return p;
 }
@@ -796,15 +1223,25 @@ function drawTrainingTarget(ctx, grid, now, scanP) {
     ctx.strokeStyle = target.detected ? "#b9ffd4" : "#ffd0d0";
     ctx.lineWidth = 1.2;
 
-    // Four small dots in a horizontal line. This is a fake raw return rather than a real radar render.
-    target.offsets.forEach(off => {
-      const x = grid.sx(target.az + off);
+    if (state.sensor === "irst") {
+      // IRST shows the contact as a single passive-search dot.
+      const x = grid.sx(target.az);
       const y = grid.sy(target.el);
       ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.arc(x, y, 4.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-    });
+    } else {
+      // Radar shows four small dots in a horizontal line to mimic a raw return smear.
+      target.offsets.forEach(off => {
+        const x = grid.sx(target.az + off);
+        const y = grid.sy(target.el);
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
   }
 
   ctx.fillStyle = "#e8eef6";
@@ -829,7 +1266,7 @@ function drawTrainingTarget(ctx, grid, now, scanP) {
 function drawSide() {
   const { w, h } = resizeCanvas(els.sideCanvas, sideCtx);
   const ctx = sideCtx;
-  const cfg = modeCfg();
+  const cfg = activeModeCfg();
   const win = scanWindow();
 
   const maxRange = Math.max(20, state.tdcRange * 1.25, cfg.tdcMax);
@@ -909,28 +1346,61 @@ function braSpeedText() {
   return `${target.speedKts.toLocaleString()} kts`;
 }
 
+function ownAltDisplayValue() {
+  if (state.units === "metric") return Math.round((state.ownAltFt * FT_TO_M) / 1000) * 1000;
+  return Math.round(state.ownAltFt / 1000) * 1000;
+}
+
+function ownAltText() {
+  if (state.units === "metric") return `${ownAltDisplayValue().toLocaleString()} m`;
+  return `${ownAltDisplayValue().toLocaleString()} ft`;
+}
+
+function applyOwnAltitudeControlLimits() {
+  if (!els.ownAltitude) return;
+
+  if (state.units === "metric") {
+    els.ownAltitude.min = 0;
+    els.ownAltitude.max = 15000;
+    els.ownAltitude.step = 1000;
+    els.ownAltitude.value = ownAltDisplayValue();
+  } else {
+    els.ownAltitude.min = 0;
+    els.ownAltitude.max = 50000;
+    els.ownAltitude.step = 1000;
+    els.ownAltitude.value = ownAltDisplayValue();
+  }
+}
+
 function updateReadout() {
   const cfg = modeCfg();
+  const activeName = activeAutoSubmode();
   const win = scanWindow();
   const brg = bearingFromAz(target.az);
   const unitLabel = state.units === "metric" ? "METRIC" : "IMPERIAL";
+  const prf = state.sensor === "radar" ? radarGateResult(activeName) : null;
   els.readout.textContent =
 `CONTENTION EWR | PICTURE REPORT (${unitLabel})
 TYPE    BRG   RNG        ALT        SPD        HDG   ASPECT
 Bandit  ${String(brg).padStart(3, "0")}   ${braRangeText().padStart(8, " ")}   ${braAltText().padStart(9, " ")}   ${braSpeedText().padStart(9, " ")}   ${String(target.heading).padStart(3, "0")}   ${target.aspect}
 
+RADAR MODEL
+PRF: ${prf ? prf.gate.name : "N/A"}
+CLOSURE: ${target.closureKmh.toLocaleString()} km/h
+PRF GATE: ${prf ? (prf.ok ? "PASS" : `FAIL ${!prf.rangeOk ? "RANGE " : ""}${!prf.closureOk ? "CLOSURE" : ""}`) : "N/A"}
+
 SENSOR: ${state.sensor.toUpperCase()}
-MODE: ${state.mode}
-SLEW: ${state.slew}
+MODE: ${state.mode}${cfg.autoAlternates ? ` / active: ${activeName}` : ``}
+SCAN ZONE: ${scanZoneDisplayName()}
 AZ WINDOW: ${win.azLo.toFixed(1)}° to ${win.azHi.toFixed(1)}°
 EL WINDOW: ${win.elLo.toFixed(1)}° to ${win.elHi.toFixed(1)}°
 DELTA-H: ${deltaH() >= 0 ? "+" : ""}${deltaH()} km
 TDC RANGE: ${Math.round(state.tdcRange)} km
 TDC MAX: ${cfg.tdcMax} km
-SCAN CYCLE: ${cfg.cycle.toFixed(2)} s
+SCAN CYCLE: ${effectiveScanCycleSeconds(activeModeCfg()).toFixed(2)} s
 TRAINING RETURN: ${target.detected ? "DETECTED" : "UNDETECTED"}
 TARGET LIFE: 20 s
-OWN ALT: ${state.units === "metric" ? `${Math.round(state.ownAltFt * FT_TO_M).toLocaleString()} m` : `${Math.round(state.ownAltFt).toLocaleString()} ft`}
+OWN ALT: ${ownAltText()}
 VISIBILITY: ${state.hideUndetected ? "return hidden until detected; BRA always visible" : "training returns visible"}
 BEARING LIMIT: 295° to 065°
 
@@ -946,19 +1416,63 @@ function render(now) {
 
 els.sensor.addEventListener("change", () => {
   state.sensor = els.sensor.value;
+  if (state.sensor === "radar") {
+    state.mode = "Head-On search";
+  } else {
+    state.mode = els.irstMode ? els.irstMode.value : "IRST search";
+  }
   fillModes();
   state.start = performance.now();
+  spawnTarget(performance.now());
 });
 
-els.mode.addEventListener("change", () => {
-  state.mode = els.mode.value;
-  applyModeLimits();
-  state.start = performance.now();
-});
+if (els.irstMode) {
+  els.irstMode.addEventListener("change", () => {
+    state.sensor = "irst";
+    els.sensor.value = "irst";
+    state.mode = els.irstMode.value;
+    applyModeLimits();
+    state.start = performance.now();
+    spawnTarget(performance.now());
+  });
+}
 
-els.deltaH.addEventListener("input", () => {
-  state.deltaHIndex = Number(els.deltaH.value);
-});
+
+if (els.modeDial) {
+  els.modeDial.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (state.sensor !== "radar") return;
+    const idx = RADAR_MODE_ORDER.indexOf(state.mode);
+    state.mode = RADAR_MODE_ORDER[Math.max(0, idx - 1)];
+    applyModeLimits();
+    state.start = performance.now();
+    spawnTarget(performance.now());
+  });
+
+  els.modeDial.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    if (state.sensor !== "radar") return;
+    const idx = RADAR_MODE_ORDER.indexOf(state.mode);
+    state.mode = RADAR_MODE_ORDER[Math.min(RADAR_MODE_ORDER.length - 1, idx + 1)];
+    applyModeLimits();
+    state.start = performance.now();
+    spawnTarget(performance.now());
+  });
+}
+
+if (els.deltaHDial) {
+  els.deltaHDial.addEventListener("click", (event) => {
+    event.preventDefault();
+    state.deltaHIndex = Math.max(0, state.deltaHIndex - 1);
+    drawDeltaHDial();
+  });
+
+  els.deltaHDial.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    state.deltaHIndex = Math.min(DELTA_H_STEPS.length - 1, state.deltaHIndex + 1);
+    drawDeltaHDial();
+  });
+}
 
 els.tdcRange.addEventListener("input", () => {
   state.tdcRange = Number(els.tdcRange.value);
@@ -970,30 +1484,34 @@ els.speed.addEventListener("input", () => {
 
 els.units.addEventListener("change", () => {
   state.units = els.units.value;
+  applyOwnAltitudeControlLimits();
 });
 
 els.hideUndetected.addEventListener("change", () => {
   state.hideUndetected = els.hideUndetected.value === "true";
 });
 
-els.ownAltitude.addEventListener("input", () => {
-  state.ownAltFt = Number(els.ownAltitude.value);
-  spawnTarget(performance.now());
-});
+if (els.ownAltitude) {
+  els.ownAltitude.addEventListener("input", () => {
+    const val = Number(els.ownAltitude.value);
+    state.ownAltFt = state.units === "metric" ? Math.round(val / FT_TO_M) : val;
+    recomputeTargetRelativeGeometry();
+  });
+}
 
 els.reset.addEventListener("click", () => {
   state.sensor = "radar";
+  state.mode = "Head-On search";
   els.sensor.value = "radar";
   fillModes();
   state.slew = "Center";
-  state.deltaHIndex = DELTA_H_STEPS.indexOf(4);
+  state.deltaHIndex = DELTA_H_STEPS.indexOf(0);
   state.tdcRange = 50;
   state.speed = 1;
   state.units = "imperial";
-  els.deltaH.value = state.deltaHIndex;
 els.units.value = state.units;
 els.hideUndetected.value = String(state.hideUndetected);
-els.ownAltitude.value = state.ownAltFt;
+if (els.ownAltitude) els.ownAltitude.value = state.ownAltFt;
   els.speed.value = state.speed;
   els.units.value = state.units;
   applyModeLimits();
@@ -1009,13 +1527,11 @@ window.addEventListener("resize", () => {
   drawSide();
 });
 
-els.deltaH.min = 0;
-els.deltaH.max = DELTA_H_STEPS.length - 1;
-els.deltaH.step = 1;
-els.deltaH.value = state.deltaHIndex;
 
 fillModes();
 applyModeLimits();
+drawDeltaHDial();
+drawModeDial();
 spawnTarget(performance.now());
 requestAnimationFrame(render);
 </script>
