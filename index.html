@@ -323,7 +323,7 @@
       <button id="reset">Reset</button>
 
       <div class="notes">
-        Scan traces use a 4-bar raster approximation for search modes and vertical sweep for vertical scan modes.
+        Scan traces use a 4-bar radar raster, IRST zig-zag search pattern, and vertical sweep for vertical scan modes.
       </div>
     </div>
 
@@ -431,19 +431,12 @@ const MODES = {
   },
   irst: {
     "IRST search": {
-      az: 60, el: 30, tilt: false, slewable: false,
-      gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
-      tdcMax: 40, cycle: 2.5,
-      path: "raster",
-      notes: "IRST center search is the widest OLS-29 scan zone and is the default passive search mode."
-    },
-    "IRST search": {
       az: 30, el: 30, tilt: false, slewable: true,
       slewNear: 0, slewFar: 30,
       gimbalAz: 30, gimbalUp: 30, gimbalDown: 15,
       tdcMax: 40, cycle: 3.5,
-      path: "raster",
-      notes: "IRST search uses a 3.5 second center scan. Left or right scan-zone selection doubles the scan speed."
+      path: "irstZigzag",
+      notes: "IRST search uses a zig-zag vertical sweep pattern. Center scan completes in 3.5 seconds; left or right scan-zone selection completes in 1.75 seconds."
     },
     "Vertical scan": {
       az: 4, el: 30, tilt: false, slewable: false,
@@ -657,9 +650,9 @@ function activeModeCfg(now = performance.now()) {
 
 function effectiveScanCycleSeconds(cfg = activeModeCfg()) {
   // IRST Search center completes in 3.5 seconds.
-  // Selecting left or right scan zone halves the scan volume, so the sweep completes in 1.75 seconds.
+  // Left/Right scan zones run at double speed, so they complete in 1.75 seconds.
   if (state.sensor === "irst" && state.mode === "IRST search" && state.slew !== "Center") {
-    return cfg.cycle / 2;
+    return cfg.cycle * 0.5;
   }
   return cfg.cycle;
 }
@@ -942,6 +935,26 @@ function scanPoint(t) {
   if (cfg.path === "vertical") {
     const y = w.elLo + (w.elHi - w.elLo) * triangle(t);
     const x = (w.azLo + w.azHi) / 2;
+    return { x, y };
+  }
+
+  if (cfg.path === "irstZigzag") {
+    // IRST search pattern based on the provided diagram:
+    // starts on the X axis, begins downward, and uses 5.5 periods per half.
+    // Center = both halves = 11 total periods. Left/Right = 5.5 periods.
+    const halfPeriods = 5.5;
+    const periods = state.slew === "Center" ? halfPeriods * 2 : halfPeriods;
+    const p = t % 1;
+
+    const x = w.azLo + (w.azHi - w.azLo) * p;
+
+    // Start at the X axis / centerline and move downward first.
+    // Triangle wave range is -1 to +1.
+    const tri = (2 / Math.PI) * Math.asin(Math.sin((2 * Math.PI * periods * p) + Math.PI));
+    const yMid = (w.elLo + w.elHi) / 2;
+    const yAmp = (w.elHi - w.elLo) / 2;
+    const y = yMid + yAmp * tri;
+
     return { x, y };
   }
 
@@ -1465,7 +1478,7 @@ DELTA-H: ${deltaH() >= 0 ? "+" : ""}${deltaH()} km
 TDC RANGE: ${Math.round(state.tdcRange)} km
 TDC MAX: ${cfg.tdcMax} km
 SCAN CYCLE: ${effectiveScanCycleSeconds(activeModeCfg()).toFixed(2)} s
-SCAN PATTERN: ${activeModeCfg().path === "raster" ? "4-bar raster" : "vertical"}
+SCAN PATTERN: ${activeModeCfg().path === "irstZigzag" ? "IRST zig-zag / 5.5 periods per half" : (activeModeCfg().path === "raster" ? "4-bar raster" : "vertical")}
 TRAINING RETURN: ${target.detected ? "DETECTED" : "UNDETECTED"}
 DETECTION RADIUS: ${state.sensor === "irst" ? "5.0°" : "6.5°"}
 TARGET LIFE: 20 s
