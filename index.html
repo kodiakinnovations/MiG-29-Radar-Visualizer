@@ -1113,8 +1113,9 @@ function maybeUpdateTargetDetection(now, scanP) {
 
   // Detection occurs only when the animated scan dot sweeps over the return
   // and the active PRF/range gate can actually see that contact.
+  const detectionRadius = state.sensor === "irst" ? 5.0 : 6.5;
   const dist = Math.hypot(scanP.x - target.az, scanP.y - target.el);
-  if (insideWindow && dist <= 3.0) target.detected = true;
+  if (insideWindow && dist <= detectionRadius) target.detected = true;
 }
 
 function resizeCanvas(canvas, ctx) {
@@ -1437,6 +1438,7 @@ TDC RANGE: ${Math.round(state.tdcRange)} km
 TDC MAX: ${cfg.tdcMax} km
 SCAN CYCLE: ${effectiveScanCycleSeconds(activeModeCfg()).toFixed(2)} s
 TRAINING RETURN: ${target.detected ? "DETECTED" : "UNDETECTED"}
+DETECTION RADIUS: ${state.sensor === "irst" ? "5.0°" : "6.5°"}
 TARGET LIFE: 20 s
 OWN ALT: ${ownAltText()}
 VISIBILITY: ${state.hideUndetected ? "return hidden until detected; BRA always visible" : "training returns visible"}
