@@ -424,9 +424,9 @@ const MODES = {
     "Close Combat vertical scan": {
       az: 6, el: 55, elLo: -10, elHi: 45, tilt: false, slewable: false,
       gimbalAz: 70, gimbalUp: 45, gimbalDown: 45,
-      tdcMax: 10, cycle: 2.2,
+      tdcMax: 10, cycle: 0.5,
       path: "vertical",
-      notes: "Close Combat vertical scan is a narrow 6° azimuth beam with +45/-10° elevation and about 9-10 km useful range."
+      notes: "Close Combat vertical scan is modeled at a 0.5 second refresh, the midpoint of the 0.3-0.7 second full-frame range."
     }
   },
   irst: {
