@@ -64,18 +64,44 @@
     .controls {
       order: 2;
       display: grid;
-      grid-template-columns: repeat(6, minmax(160px, 1fr));
-      gap: 12px;
+      grid-template-columns: 260px 1fr 520px;
+      grid-template-areas: "left middle right";
+      gap: 28px;
       align-items: start;
     }
 
-    .controls .readout {
-      grid-column: span 2;
+    .control-left {
+      grid-area: left;
+      display: grid;
+      gap: 12px;
+      align-content: start;
     }
 
-    .controls .notes {
-      grid-column: span 2;
-      margin-top: 0;
+    .control-middle {
+      grid-area: middle;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .control-right {
+      grid-area: right;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .control-right .readout {
+      grid-column: 1 / -1;
+    }
+
+    .control-right .speed-control {
+      grid-column: 2;
+    }
+
+    .control-left .notes {
+      margin-top: 28px;
     }
 
     label {
@@ -218,14 +244,20 @@
 
     @media (max-width: 1050px) {
       .canvas-grid { grid-template-columns: 1fr; }
-      .controls { grid-template-columns: 1fr 1fr; }
-      .controls .readout, .controls .notes { grid-column: span 2; }
+      .controls {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "left"
+          "middle"
+          "right";
+      }
+      .control-right { grid-template-columns: 1fr; }
+      .control-right .readout, .control-right .speed-control { grid-column: 1; }
       canvas { height: 380px; }
     }
 
     @media (max-width: 650px) {
-      .controls { grid-template-columns: 1fr; }
-      .controls .readout, .controls .notes { grid-column: span 1; }
+      .control-right { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -238,105 +270,111 @@
 
 <main class="app">
   <section class="panel controls">
-    <div>
-      <label for="sensor">Sensor</label>
-      <select id="sensor">
-        <option value="radar">Radar N-019</option>
-        <option value="irst">IRST OLS-29 / KOLS</option>
-      </select>
-    </div>
+    <div class="control-left">
+      <div>
+        <label for="sensor">Sensor</label>
+        <select id="sensor">
+          <option value="radar">Radar N-019</option>
+          <option value="irst">IRST OLS-29 / KOLS</option>
+        </select>
+      </div>
 
-    <div>
-      <label for="deltaHDial">Delta-H</label>
-      <div class="dial-wrap">
-        <canvas id="deltaHDial" width="145" height="115"></canvas>
-        <div class="value-row" style="width:100%">
-          <span id="deltaHLabel">0 km</span>
-          <span>target alt minus own alt</span>
+      <div>
+        <label for="deltaHDial">Delta-H</label>
+        <div class="dial-wrap">
+          <canvas id="deltaHDial" width="145" height="115"></canvas>
+          <div class="value-row" style="width:100%">
+            <span id="deltaHLabel">0 km</span>
+            <span>target alt minus own alt</span>
+          </div>
+          <div class="dial-help">Left click = CCW / lower<br>Right click = CW / higher</div>
         </div>
-        <div class="dial-help">Left click = CCW / lower<br>Right click = CW / higher</div>
       </div>
-    </div>
 
-    <div id="radarModeControl">
-      <label for="modeDial">Radar Mode</label>
-      <div class="dial-wrap">
-        <canvas id="modeDial" width="145" height="115"></canvas>
-        <div class="value-row" style="width:100%">
-          <span id="modeLabel">Head-On</span>
-          <span>radar selector</span>
+      <div id="radarModeControl">
+        <label for="modeDial">Radar Mode</label>
+        <div class="dial-wrap">
+          <canvas id="modeDial" width="145" height="115"></canvas>
+          <div class="value-row" style="width:100%">
+            <span id="modeLabel">Head-On</span>
+            <span>radar selector</span>
+          </div>
+          <div class="dial-help">Left click = CCW<br>Right click = CW</div>
         </div>
-        <div class="dial-help">Left click = CCW<br>Right click = CW</div>
+      </div>
+
+      <div id="irstModeControl">
+        <label for="irstMode">IRST Mode</label>
+        <select id="irstMode">
+          <option value="IRST search">IRST search</option>
+          <option value="Vertical scan">Vertical scan</option>
+        </select>
+        <div class="small">Selects OLS-29 search pattern</div>
+      </div>
+
+      <div>
+        <label for="hideUndetected">Bandit visibility</label>
+        <select id="hideUndetected">
+          <option value="false">Training: show red returns</option>
+          <option value="true">Realistic: hidden until detected</option>
+        </select>
+      </div>
+
+      <button id="reset">Reset</button>
+
+      <div class="notes">
+        Scan traces are practical approximations. The guide gives scan volumes and update times but not a verified mechanical raster trace for every mode.
       </div>
     </div>
 
-    <div id="irstModeControl">
-      <label for="irstMode">IRST Mode</label>
-      <select id="irstMode">
-        <option value="IRST search">IRST search</option>
-        <option value="Vertical scan">Vertical scan</option>
-      </select>
-      <div class="small">Selects OLS-29 search pattern</div>
-    </div>
-
-    <div>
-      <label>Scan Zone</label>
-      <div class="seg">
-        <button id="slewLeft">Left</button>
-        <button id="slewCenter" class="active">Center</button>
-        <button id="slewRight">Right</button>
+    <div class="control-middle">
+      <div>
+        <label>Scan Zone</label>
+        <div class="seg">
+          <button id="slewLeft">Left</button>
+          <button id="slewCenter" class="active">Center</button>
+          <button id="slewRight">Right</button>
+        </div>
       </div>
     </div>
 
-    <div>
-      <label for="tdcRange">TDC range</label>
-      <input id="tdcRange" type="range" min="5" max="150" value="50" step="1" />
-      <div class="value-row">
-        <span id="tdcLabel">50 km</span>
-        <span id="tdcLimitLabel">max 150 km</span>
+    <div class="control-right">
+      <div>
+        <label for="tdcRange">TDC range</label>
+        <input id="tdcRange" type="range" min="5" max="150" value="50" step="1" />
+        <div class="value-row">
+          <span id="tdcLabel">50 km</span>
+          <span id="tdcLimitLabel">max 150 km</span>
+        </div>
       </div>
-    </div>
 
-    <div>
-      <label for="speed">Animation speed</label>
-      <input id="speed" type="range" min="0" max="2" value="1" step="0.05" />
-      <div class="value-row">
-        <span id="speedLabel">1.00×</span>
-        <span>scan timing scale</span>
+      <div>
+        <label for="units">BRA units</label>
+        <select id="units">
+          <option value="imperial">Imperial: NM / ft / knots</option>
+          <option value="metric">Metric: km / m / km/h</option>
+        </select>
       </div>
-    </div>
 
-    <div>
-      <label for="units">BRA units</label>
-      <select id="units">
-        <option value="imperial">Imperial: NM / ft / knots</option>
-        <option value="metric">Metric: km / m / km/h</option>
-      </select>
-    </div>
-
-    <div>
-      <label for="ownAltitude">Own altitude</label>
-      <input id="ownAltitude" type="range" min="0" max="50000" value="25000" step="1000" />
-      <div class="value-row">
-        <span id="ownAltLabel">25,000 ft</span>
-        <span>MSL</span>
+      <div>
+        <label for="ownAltitude">Own altitude</label>
+        <input id="ownAltitude" type="range" min="0" max="50000" value="25000" step="1000" />
+        <div class="value-row">
+          <span id="ownAltLabel">25,000 ft</span>
+          <span>MSL</span>
+        </div>
       </div>
-    </div>
 
-    <div>
-      <label for="hideUndetected">Bandit visibility</label>
-      <select id="hideUndetected">
-        <option value="false">Training: show red returns</option>
-        <option value="true">Realistic: hidden until detected</option>
-      </select>
-    </div>
+      <div class="readout" id="readout"></div>
 
-    <button id="reset">Reset</button>
-
-    <div class="readout" id="readout"></div>
-
-    <div class="notes">
-      Scan traces are practical approximations. The guide gives scan volumes and update times but not a verified mechanical raster trace for every mode.
+      <div class="speed-control">
+        <label for="speed">Animation speed</label>
+        <input id="speed" type="range" min="0" max="2" value="1" step="0.05" />
+        <div class="value-row">
+          <span id="speedLabel">1.00×</span>
+          <span>scan timing scale</span>
+        </div>
+      </div>
     </div>
   </section>
 
