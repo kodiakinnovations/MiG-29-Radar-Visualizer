@@ -323,7 +323,7 @@
       <button id="reset">Reset</button>
 
       <div class="notes">
-        Scan traces are practical approximations. The guide gives scan volumes and update times but not a verified mechanical raster trace for every mode.
+        Scan traces use a 4-bar raster approximation for search modes and vertical sweep for vertical scan modes.
       </div>
     </div>
 
@@ -945,15 +945,43 @@ function scanPoint(t) {
     return { x, y };
   }
 
-  const rows = 5;
-  const tt = (t % 1) * rows;
+  const rows = 4;
+
+  // 4-bar search raster:
+  // - Starts at the top bar
+  // - Scans downward bar-by-bar
+  // - Ends at the lower-left side
+  // - Resets upward along the left side back to the top
+  // Reset time is based on distance so the vertical reset moves at the same
+  // angular speed as the horizontal bars.
+  const widthDeg = Math.abs(w.azHi - w.azLo);
+  const heightDeg = Math.abs(w.elHi - w.elLo);
+  const horizontalDistance = rows * widthDeg;
+  const resetDistance = heightDeg;
+  const sweepPortion = horizontalDistance / (horizontalDistance + resetDistance);
+  const p = t % 1;
+
+  if (p >= sweepPortion) {
+    const resetT = (p - sweepPortion) / (1 - sweepPortion);
+    return {
+      x: w.azLo,
+      y: w.elLo + (w.elHi - w.elLo) * resetT
+    };
+  }
+
+  const tt = (p / sweepPortion) * rows;
   const row = Math.min(rows - 1, Math.floor(tt));
   const rowT = tt - row;
-  const y = w.elLo + (w.elHi - w.elLo) * (row + 0.5) / rows;
+
+  // row 0 is top, row 3 is bottom.
+  const y = w.elHi - (w.elHi - w.elLo) * (row + 0.5) / rows;
+
+  // Top bar starts left-to-right, then alternates.
   const leftToRight = row % 2 === 0;
   const x = leftToRight
     ? w.azLo + (w.azHi - w.azLo) * rowT
     : w.azHi - (w.azHi - w.azLo) * rowT;
+
   return { x, y };
 }
 
@@ -1437,6 +1465,7 @@ DELTA-H: ${deltaH() >= 0 ? "+" : ""}${deltaH()} km
 TDC RANGE: ${Math.round(state.tdcRange)} km
 TDC MAX: ${cfg.tdcMax} km
 SCAN CYCLE: ${effectiveScanCycleSeconds(activeModeCfg()).toFixed(2)} s
+SCAN PATTERN: ${activeModeCfg().path === "raster" ? "4-bar raster" : "vertical"}
 TRAINING RETURN: ${target.detected ? "DETECTED" : "UNDETECTED"}
 DETECTION RADIUS: ${state.sensor === "irst" ? "5.0°" : "6.5°"}
 TARGET LIFE: 20 s
