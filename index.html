@@ -516,6 +516,7 @@ const target = {
   heading: 0,
   aspect: "Flank Left",
   detected: false,
+  lastDetectedAt: -1,
   spawnedAt: performance.now(),
   lifetimeMs: 20000,
   nextSpawnAt: performance.now(),
@@ -1049,6 +1050,7 @@ function closureForAspect(aspect, speedKmh) {
 function spawnTarget(now) {
   const cfg = modeCfg();
   target.detected = false;
+  target.lastDetectedAt = -1;
   target.spawnedAt = now;
   target.nextSpawnAt = now + target.lifetimeMs;
 
@@ -1143,20 +1145,29 @@ function targetAgeRatio(now) {
 function maybeUpdateTargetDetection(now, scanP) {
   if (now >= target.nextSpawnAt) spawnTarget(now);
 
+  // 4-second memory: once detected, the contact stays green for up to 4 seconds.
+  // If the scan does not hit it again within 4 seconds, it turns back red.
+  if (target.detected && target.lastDetectedAt >= 0 && (now - target.lastDetectedAt) > 4000) {
+    target.detected = false;
+  }
+
+  const cfg = activeModeCfg(now);
   const win = scanWindow();
   const prfGate = state.sensor === "radar" ? radarGateResult(activeAutoSubmode()) : { ok: true };
 
   const insideWindow =
     target.az >= win.azLo && target.az <= win.azHi &&
     target.el >= win.elLo && target.el <= win.elHi &&
-    target.range <= activeModeCfg().tdcMax &&
-    prfGate.ok;
+    target.range <= cfg.tdcMax;
 
-  // Detection occurs only when the animated scan dot sweeps over the return
-  // and the active PRF/range gate can actually see that contact.
+  // Training detection: when the animated scan dot passes over the contact
+  // inside the scan window, the return turns green and refreshes memory.
   const detectionRadius = state.sensor === "irst" ? 5.0 : 6.5;
   const dist = Math.hypot(scanP.x - target.az, scanP.y - target.el);
-  if (insideWindow && dist <= detectionRadius) target.detected = true;
+  if (insideWindow && dist <= detectionRadius) {
+    target.detected = true;
+    target.lastDetectedAt = now;
+  }
 }
 
 function resizeCanvas(canvas, ctx) {
